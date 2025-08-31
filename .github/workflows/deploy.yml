@@ -1,0 +1,63 @@
+name: Build & Deploy (Cloud Run)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      REGION: us-central1
+      PROJECT: ${{ secrets.GCP_PROJECT }}
+      SERVICE: fridas-forms
+      REPO: containers
+      IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.REPO }}/${{ env.SERVICE }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Autentica no GCP via Workload Identity Federation
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Descobre automaticamente onde está o Dockerfile (services/intake-service ou app)
+      - name: Resolve build context
+        run: |
+          if [ -f services/intake-service/Dockerfile ]; then
+            echo "BUILD_CONTEXT=services/intake-service" >> $GITHUB_ENV
+          elif [ -f app/Dockerfile ]; then
+            echo "BUILD_CONTEXT=app" >> $GITHUB_ENV
+          else
+            echo "Nenhum Dockerfile encontrado em services/intake-service/ ou app/"; exit 1
+          fi
+          echo "Usando build context: $BUILD_CONTEXT"
+
+      # Habilita push para Artifact Registry
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker $REGION-docker.pkg.dev
+
+      # Build & Push
+      - name: Build & Push image
+        run: |
+          docker build -t $IMAGE:${{ github.sha }} $BUILD_CONTEXT
+          docker push $IMAGE:${{ github.sha }}
+
+      # Deploy no Cloud Run (sem variáveis por enquanto)
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy $SERVICE \
+            --image $IMAGE:${{ github.sha }} \
+            --region $REGION \
+            --no-allow-unauthenticated \
+            --min-instances=0 --max-instances=1
