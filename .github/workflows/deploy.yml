@@ -17,12 +17,10 @@ jobs:
       PROJECT: ${{ secrets.GCP_PROJECT }}
       SERVICE: fridas-forms
       REPO: containers
-      IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.REPO }}/${{ env.SERVICE }}
 
     steps:
       - uses: actions/checkout@v4
 
-      # Autentica no GCP via Workload Identity Federation
       - id: auth
         uses: google-github-actions/auth@v2
         with:
@@ -31,8 +29,8 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # Descobre automaticamente onde está o Dockerfile (services/intake-service ou app)
-      - name: Resolve build context
+      # Descobre contexto de build e monta variável IMAGE
+      - name: Resolve build context & set IMAGE
         run: |
           if [ -f services/intake-service/Dockerfile ]; then
             echo "BUILD_CONTEXT=services/intake-service" >> $GITHUB_ENV
@@ -41,23 +39,22 @@ jobs:
           else
             echo "Nenhum Dockerfile encontrado em services/intake-service/ ou app/"; exit 1
           fi
+          echo "IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT }}/${{ env.REPO }}/${{ env.SERVICE }}" >> $GITHUB_ENV
           echo "Usando build context: $BUILD_CONTEXT"
+          echo "Imagem: $IMAGE"
 
-      # Habilita push para Artifact Registry
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker $REGION-docker.pkg.dev
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
 
-      # Build & Push
       - name: Build & Push image
         run: |
-          docker build -t $IMAGE:${{ github.sha }} $BUILD_CONTEXT
-          docker push $IMAGE:${{ github.sha }}
+          docker build -t "$IMAGE:${{ github.sha }}" "$BUILD_CONTEXT"
+          docker push "$IMAGE:${{ github.sha }}"
 
-      # Deploy no Cloud Run (sem variáveis por enquanto)
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy $SERVICE \
-            --image $IMAGE:${{ github.sha }} \
-            --region $REGION \
+          gcloud run deploy "${{ env.SERVICE }}" \
+            --image "$IMAGE:${{ github.sha }}" \
+            --region "${{ env.REGION }}" \
             --no-allow-unauthenticated \
             --min-instances=0 --max-instances=1
